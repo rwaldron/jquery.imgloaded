@@ -1,70 +1,216 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-
 <head>
 	<title>QUnit: Image Load</title>
 	<link rel="stylesheet" href="qunit/qunit.css" />
-	<style>img { display: block; }</style>
-
-	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js"></script>
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.js"></script>
 	<script src="../ahpi.imgload.js"></script>
 	<script src="qunit/qunit.js"></script>
-	<script>
-(function () {
+	<script>//<![CDATA[
+	(function () {
+		var eventData = { foo: "bar" },
+			guid = '' + (+new Date()),
+			uuid = 0,
+			container = '#test-container';
 
-var img = new Image();
-img.onerror = img.onload = function () { runTests(); };
-img.src = 'cached.gif';
+		function unbindEventHandler(e) {
+			var $this = $(this);
+			$this.unbind('load');
+			ok(testEventMissing($this), "Load event unbound");
+			start();
+		}
 
-function runTests() {
+		function eventHandler(e) {
+			ok(true, "Load event fired");
+			ok(e.data && e.data.foo === 'bar', "Event data received OK");
+			ok(e.currentTarget == this, "Event objects match");
+		}
 
-	test("Image load event (Normal)", function () {
+		function testEventMissing(jq) {
+			return !jq.data('events') || !jq.data('events').load || !jq.data('events').load.length;
+		}
 
-		expect(2);
+		function runTests() {
+			test("Image load event (Exists at load)", 4, function () {
+				stop();
+				$('#normal')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler);
 
-		var $normal = $('#normal');
-		$normal.bind('load', function () { ok(true, "Load event fired"); });
-		$normal.unbind('load');
-		ok(true, "Load event unbound");
-	});
+				setTimeout(function () {
+					if (document.readyState === 'complete') {
+						start();
+					}
+					else {
+						$(window).load(start);
+					}
+				}, 2000);
+			});
 
-	test("Image load event (Cached)", function () {
+			test("Image load event (Data URI)", 4, function () {
+				stop();
+				$('<img />')
+					.attr('src', 'data:image/gif;base64,R0lGODdhGwAPAIAAAP///wAAACwAAAAAGwAPAAACN4SPqcvtD08IaIKJrclab+pdlDR+FViK50qq7Wu2XOjGJreEOmrDteqhCUed1E6R8RWTkaYzUgAAOw==')
+					.bind('error', function () {
+						ok(true, "Data URI not supported");
+						ok(true, "IE7 is terrible, BTW");
+						ok(true, "IE6 is even worse, FYI");
+						ok(testEventMissing($(this)), 'Load event unbound');
+					})
+					.bind('load', eventData, eventHandler)
+					.bind('load error', unbindEventHandler)
+					.appendTo(container);
 
-		expect(2);
+				setTimeout(start, 2000);
+			});
 
-		var $cached = $('#cached').attr('src', 'cached.gif');
-		$cached.bind('load', function () { ok(true, "Load event fired"); });
-		$cached.unbind('load');
-		ok(true, 'Load event unbound');
-	});
+			test("Image load event (Bind first, cached)", 4, function () {
+				stop(2000);
+				$('<img />')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler)
+					.attr('src', 'normal.gif')
+					.appendTo(container);
+			});
 
-	test("Image load event (Data URI)", function () {
+			test("Image load event (Bind first, cache-busted)", 4, function () {
+				stop(2000);
+				$('<img />')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler)
+					.attr('src', 'normal.gif?' + guid + (++uuid))
+					.appendTo(container);
+			});
 
-		expect(2);
+			// This test always fails in IE without imgload.js
+			test("Image load event (Bind second, cached)", 4, function () {
+				stop(2000);
+				$('<img />')
+					.attr('src', 'normal.gif')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler)
+					.appendTo(container);
+			});
 
-		var $datauri = $('#datauri');
-		$datauri.bind('error', function () { ok(true, "Data URI not supported"); });
-		$datauri.bind('load', function () { ok(true, "Load event fired"); });
-		$datauri.unbind('load');
-		ok(true, 'Load event unbound');
-	});
-}
-}());
+			// In IE, this test is unreliable. Sometimes asserts, sometimes
+			// not.
+			test("Image load event (Bind second, cache-busted)", 4, function () {
+				stop(2000);
+				$('<img />')
+					.attr('src', 'normal.gif?' + guid + (++uuid))
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler)
+					.appendTo(container);
+			});
 
-	</script>
+			test("Image load event (HTML injection, cached)", 4, function () {
+				stop(2000);
+				$('#inject')
+					.html('<img src="normal.gif" />')
+					.find('img')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler);
+			});
 
+			test("Image load event (HTML injection, cache-busted)", 4, function () {
+				stop(2000);
+				$('#inject')
+					.empty()
+					.html('<img src="normal.gif?' + guid + (++uuid) + '" />')
+					.find('img')
+					.bind('load', eventData, eventHandler)
+					.bind('load', unbindEventHandler);
+			});
+
+			// Safari and Chrome do not fire load events when src is changed to
+			// itself
+			test("Image load event (double load, uncached to cached)", 7, function () {
+				stop(2000);
+				var $img = $('<img />');
+
+				// IE dies if we try to chain this entire thing because $img is
+				// referenced by the inner function before the end of the chain
+				$img
+					.attr('src', 'normal.gif?' + guid + (++uuid))
+					.bind('load', eventData, eventHandler)
+					.bind('load', function recall(e) {
+						$img
+							// if we try to unbind using recall as the function
+							// reference, IE never unbinds it and we recurse
+							// infinitely :|
+							.unbind('load', arguments.callee)
+							.attr('src', 'normal.gif')
+							.bind('load', unbindEventHandler);
+					})
+					.appendTo(container);
+			});
+
+			test("Image load event (double load, cached to uncached)", 7, function () {
+				stop(2000);
+				var $img = $('<img />');
+
+				// IE dies if we try to chain this entire thing because $img is
+				// referenced by the inner function before the end of the chain
+				$img
+					.attr('src', 'normal.gif')
+					.bind('load', eventData, eventHandler)
+					.bind('load', function recall(e) {
+						$img
+							// if we try to unbind using recall as the function
+							// reference, IE never unbinds it and we recurse
+							// infinitely :|
+							.unbind('load', arguments.callee)
+							.attr('src', 'normal.gif?' + guid + (++uuid))
+							.bind('load', unbindEventHandler);
+					})
+					.appendTo(container);
+			});
+
+			test("Invalid image load event (delayed bind, cached)", 1, function () {
+				stop();
+				var $img = $('<img />')
+					.attr('src', 'normal.gif')
+					.appendTo(container);
+
+				setTimeout(function () {
+					$img
+						.bind('load', eventData, eventHandler)
+						.bind('load', unbindEventHandler);
+				}, 1000);
+
+				setTimeout(function () {
+					ok(true, 'No event fired');
+					start();
+				}, 2000);
+			});
+
+			test("Invalid image load event (delayed bind, cache-busted)", 1, function () {
+				stop();
+				var $img = $('<img />')
+					.attr('src', 'normal.gif?' + guid + (++uuid))
+					.appendTo(container);
+
+				setTimeout(function () {
+					$img
+						.bind('load', eventData, eventHandler)
+						.bind('load', unbindEventHandler);
+				}, 1000);
+
+				setTimeout(function () {
+					ok(true, 'No event fired');
+					start();
+				}, 2000);
+			});
+		}
+
+		// Opera SHITS A BRICK if you initialise tests from DOMDocumentLoaded
+		// instead of from the onload of the test image
+		this.runTests = runTests;
+	}());
+	//]]></script>
 </head>
-
 <body>
-
-<p>
-	<img id="normal" src="normal.gif" />
-	<img id="cached" src="" />
-	<img id="datauri" src="data:image/gif;base64,R0lGODdhGwAPAIAAAP///wAAACwAAAAAGwAPAAACN4SPqcvtD08IaIKJrclab+pdlDR+FViK50qq7Wu2XOjGJreEOmrDteqhCUed1E6R8RWTkaYzUgAAOw==" />
-	<a href="../ahpi.imgload.js">ahpi.imgload.js Source</a>
-</p>
-
+<p id="test-container"><img id="normal" src="normal.gif" onload="runTests();" /><span id="inject"></span></p>
 <ol id="qunit-tests"></ol>
 </body>
-
 </html>
